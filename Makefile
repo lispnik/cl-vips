@@ -22,12 +22,14 @@ BOOT = --non-interactive \
 
 ## build: dump ./cl-vips (next to cl-vips.asd) via asdf:make
 build:
-	$(LISP) $(BOOT) --eval '(asdf:make :cl-vips/executable)'
+	$(LISP) $(BOOT) \
+	  --eval '(if (find-package :ql) (uiop:symbol-call :ql :quickload :cl-vips/cli :silent t) (asdf:load-system :cl-vips/cli))' \
+	  --eval '(asdf:make :cl-vips/executable)'
 
 ## test: load and run the suite; exit nonzero if any check fails
 test:
 	$(LISP) $(BOOT) \
-	  --eval '(asdf:load-system :cl-vips/test)' \
+	  --eval '(if (find-package :ql) (uiop:symbol-call :ql :quickload :cl-vips/test :silent t) (asdf:load-system :cl-vips/test))' \
 	  --eval '(uiop:quit (if (uiop:symbol-call :vips/test :run-tests) 0 1))'
 
 ## tutorial: tangle TUTORIAL.org into a runnable tutorial.lisp
