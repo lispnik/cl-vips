@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} · SBCL
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SBCL and libvips (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          # libvips-dev pulls the runtime lib (libvips.so.42) and glib; its
+          # package name changed across Ubuntu releases but this one is stable.
+          sudo apt-get install -y --no-install-recommends sbcl libvips-dev libvips-tools
+
+      - name: Install SBCL and libvips (macOS)
+        if: runner.os == 'macOS'
+        run: brew install sbcl vips
+
+      - name: Cache Quicklisp
+        uses: actions/cache@v4
+        with:
+          path: ~/quicklisp
+          key: quicklisp-${{ runner.os }}-v1
+
+      - name: Install Quicklisp
+        run: |
+          if [ ! -f "$HOME/quicklisp/setup.lisp" ]; then
+            curl -sSLO https://beta.quicklisp.org/quicklisp.lisp
+            sbcl --non-interactive \
+                 --load quicklisp.lisp \
+                 --eval '(quicklisp-quickstart:install)'
+          fi
+
+      - name: Versions
+        run: |
+          sbcl --version
+          vips --version || true
+
+      - name: Run tests
+        run: make test
+
+      - name: Build executable
+        run: |
+          make build
+          ./cl-vips version

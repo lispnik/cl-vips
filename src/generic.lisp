@@ -395,12 +395,21 @@ property's declared GType."
 (defconstant +arg-input+     16)
 (defconstant +arg-output+    32)
 (defconstant +arg-deprecated+ 64)
+(defconstant +arg-modify+   128)
 
-(declaim (inline %arg-input-p %arg-output-p %arg-required-p %arg-deprecated-p))
+(declaim (inline %arg-input-p %arg-output-p %arg-required-p %arg-deprecated-p
+                 %arg-modify-p))
 (defun %arg-input-p     (flags) (logtest flags +arg-input+))
 (defun %arg-output-p    (flags) (logtest flags +arg-output+))
 (defun %arg-required-p  (flags) (logtest flags +arg-required+))
 (defun %arg-deprecated-p (flags) (logtest flags +arg-deprecated+))
+(defun %arg-modify-p    (flags) (logtest flags +arg-modify+))
+
+;; Draw and similar in-place operations take an INPUT image flagged MODIFY that
+;; they mutate; the mutated image *is* the result. vips_image_copy_memory gives
+;; us an owned, writable memory copy to hand such an argument.
+(cffi:defcfun ("vips_image_copy_memory" %vips-image-copy-memory) :pointer
+  (image :pointer))
 
 (defun %object-arguments (op)
   "Return a list of (NAME . FLAGS) conses for every argument of VipsObject OP."
@@ -424,6 +433,14 @@ property's declared GType."
 ;;; The engine
 ;;; ---------------------------------------------------------------------------
 
+(defun %set-object-pointer (op name pointer)
+  "Set object-valued argument NAME of OP directly from a raw VipsObject
+POINTER (used for MODIFY image copies)."
+  (let ((value-type (%property-value-type op name)))
+    (%with-gvalue (gv value-type)
+      (%g-value-set-object gv pointer)
+      (%g-object-set-property op name gv))))
+
 (defun call-operation (nickname inputs &key (output "out") outputs)
   "Call the libvips operation named NICKNAME (a string such as \"gaussblur\").
 INPUTS is a plist of libvips argument names (strings) to Lisp values; images
@@ -437,14 +454,29 @@ list of argument names, or :ALL for every non-deprecated output argument.
 
 Signals VIPS-ERROR on any failure."
   (ensure-gtypes)
-  (let ((op (%vips-operation-new nickname)))
+  (let ((op (%vips-operation-new nickname))
+        (modify-copies '())   ; owned copies we made for MODIFY inputs
+        (primary-modify nil)  ; the first, which becomes the result for draw ops
+        (returned nil))       ; the copy handed to the caller (not to be unref'd)
     (when (cffi:null-pointer-p op)
       ;; unknown operation name
       (raise-vips-error))
     (unwind-protect
-         (progn
+         (let* ((args (%object-arguments op))
+                (flags-of (lambda (name) (cdr (assoc name args :test #'string=)))))
+           ;; Set inputs. An INPUT+MODIFY image argument (draw ops) is mutated
+           ;; in place, so pass a memory copy we own -- that copy is the result.
            (loop for (name value) on inputs by #'cddr
-                 do (%set-property op name value))
+                 for flags = (funcall flags-of name)
+                 do (if (and flags (%arg-modify-p flags) (%arg-input-p flags)
+                             (imagep value))
+                        (let ((copy (%vips-image-copy-memory (pointer-of value))))
+                          (when (cffi:null-pointer-p copy)
+                            (raise-vips-error))
+                          (push copy modify-copies)
+                          (unless primary-modify (setf primary-modify copy))
+                          (%set-object-pointer op name copy))
+                        (%set-property op name value)))
            (cffi:with-foreign-object (opp :pointer)
              (setf (cffi:mem-ref opp :pointer) op)
              (let ((status (%vips-cache-operation-buildp opp)))
@@ -453,14 +485,30 @@ Signals VIPS-ERROR on any failure."
                (setf op (cffi:mem-ref opp :pointer))
                (unless (zerop status)
                  (raise-vips-error))
-               (if outputs
-                   (let ((names (if (eq outputs :all)
-                                    (%output-names op)
-                                    outputs)))
-                     (values-list
-                      (mapcar (lambda (name) (%get-property op name)) names)))
-                   (%get-property op output)))))
-      (%g-object-unref op))))
+               (cond
+                 (outputs
+                  (let ((names (if (eq outputs :all) (%output-names op) outputs)))
+                    (values-list
+                     (mapcar (lambda (name) (%get-property op name)) names))))
+                 ;; a normal output argument (default "out") is present
+                 ((let ((flags (funcall flags-of output)))
+                    (and flags (%arg-output-p flags)))
+                  (%get-property op output))
+                 ;; else fall back to the operation's first output argument
+                 ((%output-names op)
+                  (%get-property op (first (%output-names op))))
+                 ;; else an in-place op: return the mutated MODIFY copy
+                 (primary-modify
+                  (setf returned primary-modify)
+                  (wrap-image primary-modify))
+                 (t (error 'vips-error
+                           :message (format nil "operation ~s has no output"
+                                            nickname)))))))
+      ;; Release the operation and any MODIFY copies we did not hand back.
+      (%g-object-unref op)
+      (dolist (copy modify-copies)
+        (unless (eq copy returned)
+          (%g-object-unref copy))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Thin named wrappers built on the engine

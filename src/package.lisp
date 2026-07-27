@@ -35,6 +35,9 @@
    #:image-from-octets
    #:write-to-octets
    #:image-from-pixels
+   #:write-to-memory
+   #:image-to-array
+   #:image-from-array
 
    ;; header / introspection
    #:width

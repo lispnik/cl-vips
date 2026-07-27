@@ -334,3 +334,112 @@ field is absent or of the wrong type."
                            collect (cffi:mem-aref data :double i))))
         (%g-free data)
         result))))
+
+;;; ---------------------------------------------------------------------------
+;;; Raw (uncompressed) pixel access
+;;; ---------------------------------------------------------------------------
+
+(cffi:defcfun ("vips_image_write_to_memory" %vips-image-write-to-memory) :pointer
+  (image :pointer) (size :pointer))
+
+(defun %format-cffi-type (format)
+  "The CFFI element type for a BAND-FORMAT keyword."
+  (ecase format
+    (:uchar :uint8)  (:char :int8)
+    (:ushort :uint16) (:short :int16)
+    (:uint :uint32)  (:int :int32)
+    (:float :float)  (:double :double)))
+
+(defun %format-element-type (format)
+  "The Lisp array element type for a BAND-FORMAT keyword."
+  (ecase format
+    (:uchar '(unsigned-byte 8))  (:char '(signed-byte 8))
+    (:ushort '(unsigned-byte 16)) (:short '(signed-byte 16))
+    (:uint '(unsigned-byte 32))  (:int '(signed-byte 32))
+    (:float 'single-float)       (:double 'double-float)))
+
+(defun %element-type-format (element-type)
+  "Infer a BAND-FORMAT keyword from a Lisp array element type (narrowest
+match first)."
+  (cond ((subtypep element-type '(unsigned-byte 8))  :uchar)
+        ((subtypep element-type '(signed-byte 8))    :char)
+        ((subtypep element-type '(unsigned-byte 16)) :ushort)
+        ((subtypep element-type '(signed-byte 16))   :short)
+        ((subtypep element-type '(unsigned-byte 32)) :uint)
+        ((subtypep element-type '(signed-byte 32))   :int)
+        ((subtypep element-type 'single-float)       :float)
+        ((subtypep element-type 'double-float)       :double)
+        (t (error 'vips-error
+                  :message (format nil "no vips format for element type ~s"
+                                   element-type)))))
+
+(defun write-to-memory (image)
+  "Return IMAGE's raw, uncompressed pixel data as a flat (unsigned-byte 8)
+vector, plus geometry. Returns (values OCTETS WIDTH HEIGHT BANDS FORMAT). The
+bytes are band-interleaved, row-major."
+  (cffi:with-foreign-object (size :unsigned-long)
+    (let ((ptr (%vips-image-write-to-memory (pointer-of image) size)))
+      (when (cffi:null-pointer-p ptr)
+        (raise-vips-error))
+      (unwind-protect
+           (let* ((n (cffi:mem-ref size :unsigned-long))
+                  (octets (make-array n :element-type '(unsigned-byte 8))))
+             (dotimes (i n)
+               (setf (aref octets i) (cffi:mem-aref ptr :uint8 i)))
+             (values octets (width image) (height image)
+                     (bands image) (image-format image)))
+        (%g-free ptr)))))
+
+(defun image-to-array (image)
+  "Return IMAGE's pixels as a 3D array with dimensions (HEIGHT WIDTH BANDS)
+whose element type matches the image's format (e.g. (unsigned-byte 8) for
+:UCHAR, SINGLE-FLOAT for :FLOAT)."
+  (let* ((w (width image)) (h (height image)) (b (bands image))
+         (format (image-format image))
+         (ctype (%format-cffi-type format))
+         (array (make-array (list h w b)
+                            :element-type (%format-element-type format))))
+    (cffi:with-foreign-object (size :unsigned-long)
+      (let ((ptr (%vips-image-write-to-memory (pointer-of image) size)))
+        (when (cffi:null-pointer-p ptr)
+          (raise-vips-error))
+        (unwind-protect
+             (let ((i 0))
+               (dotimes (y h)
+                 (dotimes (x w)
+                   (dotimes (k b)
+                     (setf (aref array y x k) (cffi:mem-aref ptr ctype i))
+                     (incf i))))
+               array)
+          (%g-free ptr))))))
+
+(defun image-from-array (array &optional format)
+  "Build an image from a Lisp ARRAY of rank 2 (HEIGHT WIDTH, one band) or rank
+3 (HEIGHT WIDTH BANDS). FORMAT is a BAND-FORMAT keyword; it defaults to one
+inferred from the array's element type. The data is copied."
+  (ensure-init)
+  (let* ((rank (array-rank array))
+         (h (array-dimension array 0))
+         (w (array-dimension array 1))
+         (b (if (= rank 3) (array-dimension array 2) 1))
+         (fmt (or format (%element-type-format (array-element-type array))))
+         (ctype (%format-cffi-type fmt))
+         (nelem (* h w b))
+         (nbytes (* nelem (cffi:foreign-type-size ctype))))
+    (unless (member rank '(2 3))
+      (error 'vips-error :message "image-from-array needs a rank-2 or rank-3 array"))
+    (cffi:with-foreign-object (buffer :uint8 nbytes)
+      (let ((i 0))
+        (dotimes (y h)
+          (dotimes (x w)
+            (dotimes (k b)
+              (setf (cffi:mem-aref buffer ctype i)
+                    (if (= rank 3) (aref array y x k) (aref array y x)))
+              (incf i)))))
+      (wrap-image
+       (cffi:foreign-funcall "vips_image_new_from_memory_copy"
+                             :pointer buffer
+                             :unsigned-long nbytes
+                             :int w :int h :int b
+                             band-format fmt
+                             :pointer)))))

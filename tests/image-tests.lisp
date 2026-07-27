@@ -90,3 +90,51 @@
   (with-fixture initialized ()
     (signals vips:vips-error
       (vips:load-image "/no/such/file/definitely-missing.png"))))
+
+;;; --- Raw pixel array I/O -------------------------------------------------
+
+(test image-array-round-trip-uchar
+  "image-from-array then image-to-array reproduces a uchar array exactly."
+  (with-fixture initialized ()
+    (let ((arr (make-array '(3 4 3) :element-type '(unsigned-byte 8))))
+      (dotimes (y 3)
+        (dotimes (x 4)
+          (dotimes (k 3)
+            (setf (aref arr y x k) (mod (+ (* 40 y) (* 7 x) (* 3 k)) 256)))))
+      (vips:with-image (img (vips:image-from-array arr))
+        (is (= 4 (vips:width img)))
+        (is (= 3 (vips:height img)))
+        (is (= 3 (vips:bands img)))
+        (is (eq :uchar (vips:image-format img)))
+        (is (equalp arr (vips:image-to-array img)))))))
+
+(test image-array-rank-2-single-band
+  "A rank-2 array becomes a single-band image."
+  (with-fixture initialized ()
+    (let ((arr (make-array '(2 3) :element-type '(unsigned-byte 8)
+                                  :initial-contents '((1 2 3) (4 5 6)))))
+      (vips:with-image (img (vips:image-from-array arr))
+        (is (= 1 (vips:bands img)))
+        (is (= 3 (vips:width img)))
+        (is (equal '(4.0d0) (vips:getpoint img 0 1)))))))
+
+(test image-array-round-trip-float
+  "Float arrays round-trip through the :FLOAT format."
+  (with-fixture initialized ()
+    (let ((arr (make-array '(2 2 1) :element-type 'single-float
+                                    :initial-element 1.5f0)))
+      (setf (aref arr 1 1 0) -3.25f0)
+      (vips:with-image (img (vips:image-from-array arr))
+        (is (eq :float (vips:image-format img)))
+        (is (equalp arr (vips:image-to-array img)))))))
+
+(test write-to-memory-geometry
+  "write-to-memory returns the raw bytes and correct geometry."
+  (with-fixture initialized ()
+    (vips:with-image (img (solid-image 5 4 :bands 3 :value 200))
+      (multiple-value-bind (octets w h b format) (vips:write-to-memory img)
+        (is (typep octets '(vector (unsigned-byte 8))))
+        (is (= (* 5 4 3) (length octets)))   ; uchar => 1 byte/sample
+        (is (= 5 w)) (is (= 4 h)) (is (= 3 b))
+        (is (eq :uchar format))
+        (is (= 200 (aref octets 0)))))))

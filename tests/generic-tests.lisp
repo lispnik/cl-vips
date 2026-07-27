@@ -341,3 +341,22 @@ its own references."
   (with-fixture initialized ()
     (signals vips:vips-error
       (vips:call-operation "invert" '()))))
+
+;;; --- In-place (MODIFY) operations ----------------------------------------
+
+(test engine-modify-draw-operation
+  "An in-place MODIFY op (draw_circle) returns the mutated image and leaves the
+input image untouched (the engine draws on a private memory copy)."
+  (with-fixture initialized ()
+    (vips:with-image (img (vips:black 20 20 :bands 3))
+      (vips:with-image (drawn (vips:call-operation
+                               "draw_circle"
+                               (list "image" img "ink" '(255 128 0)
+                                     "cx" 10 "cy" 10 "radius" 6 "fill" t)))
+        (is (vips:imagep drawn))
+        ;; centre was painted with the ink colour
+        (is (equal '(255 128 0) (mapcar #'round (vips:getpoint drawn 10 10))))
+        ;; a corner is still background
+        (is (equal '(0 0 0) (mapcar #'round (vips:getpoint drawn 0 0))))
+        ;; and the ORIGINAL image is unchanged
+        (is (equal '(0 0 0) (mapcar #'round (vips:getpoint img 10 10))))))))

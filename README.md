@@ -1,10 +1,13 @@
 # cl-vips
 
+[![CI](https://github.com/lispnik/cl-vips/actions/workflows/ci.yml/badge.svg)](https://github.com/lispnik/cl-vips/actions/workflows/ci.yml)
+
 Common Lisp CFFI bindings to [libvips](https://www.libvips.org/), a fast,
 low-memory image-processing library.
 
-Tested with **SBCL 2.6.6** + **libvips 8.18** on macOS (Apple Silicon), using
-**CFFI** for the FFI and **FiveAM** for the test suite.
+Tested with **SBCL** + **libvips 8.18** on Linux and macOS, using **CFFI** for
+the FFI and **FiveAM** for the test suite. CI runs the suite on
+`ubuntu-latest` and `macos-latest`.
 
 ## Requirements
 
@@ -60,6 +63,7 @@ search path automatically; adjust `vips:*library-directories*` if yours differ.
 | Lifecycle | `init` `shutdown` `initialized-p` `version` `version-string` `set-leak-checking` |
 | Images | `image` `imagep` `image-live-p` `unref` `with-image` `with-images` `with-image-pool` `keep` |
 | I/O | `load-image` `save-image` `image-from-octets` `write-to-octets` `image-from-pixels` |
+| Raw pixels | `write-to-memory` `image-to-array` `image-from-array` |
 | Introspection | `width` `height` `bands` `image-format` `interpretation` `filename` `get-double` `get-int` `get-string` `getpoint` |
 | Create | `black` |
 | Geometry | `resize` `crop` `embed` `flip` `rotate` |
@@ -97,6 +101,15 @@ The hand-written functions above cover a curated core. For everything else,
 Values are boxed/unboxed by querying each argument's declared GType, so you
 pass natural Lisp values: numbers, `t`/`nil`, strings, enum keywords, and
 `vips:image` objects. Object outputs come back as owned `vips:image`s.
+
+In-place (`MODIFY`) operations work too — the `draw` family (`draw_circle`,
+`draw_line`, `draw_image`, …) mutate their input, so the engine draws on a
+private memory copy and returns it, leaving your image untouched:
+
+```lisp
+(vips:call-operation "draw_circle"
+                     (list "image" img "ink" '(255 0 0) "cx" 50 "cy" 50 "radius" 20))
+```
 
 Define a tidy named wrapper over any operation with `define-operation`:
 
@@ -221,6 +234,24 @@ Because nothing is auto-freed, a dropped image simply leaks. During development
 call `(vips:set-leak-checking t)` — libvips will then print any objects still
 alive (images you forgot to free) at `shutdown`.
 
+## Raw pixel data
+
+Beyond one-pixel `getpoint`, you can move whole images to and from Lisp arrays:
+
+```lisp
+;; image -> a (HEIGHT WIDTH BANDS) array, element type matching the format
+(vips:image-to-array img)          ; e.g. (unsigned-byte 8) for :uchar, single-float for :float
+
+;; a Lisp array -> image (format inferred from the element type; rank 2 = 1 band)
+(vips:image-from-array pixels)
+
+;; the raw interleaved bytes plus geometry
+(vips:write-to-memory img)         ; => (values octets width height bands format)
+```
+
+`image-to-array` / `image-from-array` round-trip exactly, including non-uchar
+formats (`:ushort`, `:float`, `:double`, …).
+
 ## Command-line driver
 
 `cl-vips/cli` provides a command-line tool that mirrors the `vips` CLI: it
@@ -278,7 +309,7 @@ or from a REPL:
 (asdf:test-system :cl-vips)      ; or (vips/test:run-tests)
 ```
 
-The suite (212 checks across core, I/O, operations, the generic engine, the
+The suite (233 checks across core, I/O, operations, the generic engine, the
 command-line driver and error handling) builds its fixtures from raw memory and
 programmatic ramps, so it needs **no sample image files**.
 
