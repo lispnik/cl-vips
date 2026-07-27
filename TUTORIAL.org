@@ -1,0 +1,566 @@
+#+TITLE: cl-vips: A Hands-On Tutorial
+#+AUTHOR: cl-vips
+#+OPTIONS: toc:3 num:t ^:nil
+#+STARTUP: showall
+#+PROPERTY: header-args:lisp :tangle tutorial.lisp :mkdirp yes :comments no :results silent
+
+* About this tutorial
+
+This is a literate, /tangle-able/ tutorial for *cl-vips*, a CFFI binding to
+[[https://www.libvips.org/][libvips]]. Every Lisp block below tangles into a single runnable script,
+=tutorial.lisp=, in the order it appears.
+
+- To extract the script in Emacs: open this file and run =M-x org-babel-tangle=
+  (or =C-c C-v C-t=). That writes =tutorial.lisp=.
+- From the shell you can tangle in batch:
+  #+begin_src sh :tangle no
+  emacs --batch -l org TUTORIAL.org -f org-babel-tangle
+  #+end_src
+- Then run it:
+  #+begin_src sh :tangle no
+  sbcl --non-interactive --load tutorial.lisp
+  #+end_src
+
+The tangled script runs top to bottom with no external image files: every
+image is built from raw memory or created by libvips itself.
+
+Blocks marked =:tangle no= are illustrative fragments and are /not/ part of the
+runnable script.
+
+* Prerequisites
+
+- SBCL and Quicklisp
+- libvips installed and on the shared-library search path
+  (macOS: =brew install vips=; Debian/Ubuntu: =apt install libvips42=)
+- The =cl-vips= system loadable by ASDF
+
+* Loading the library and initializing
+
+The very first block sets up the runnable script: load Quicklisp, put the
+=cl-vips= system on ASDF's registry (edit the path to wherever this repository
+lives), load it, and switch into a working package.
+
+Every program must call ~vips:init~ once before using any other function; it
+loads the foreign libraries and initializes libvips. It is idempotent.
+
+#+begin_src lisp
+;;;; tutorial.lisp -- tangled from TUTORIAL.org.  Do not edit by hand.
+(load (merge-pathnames "quicklisp/setup.lisp" (user-homedir-pathname)))
+
+;; Point ASDF at the directory containing cl-vips.asd. Adjust as needed;
+;; this default matches the repository layout.
+(pushnew #p"/Users/mkennedy/Projects/common-lisp/vips/" asdf:*central-registry*
+         :test #'equal)
+
+;; cl-vips/cli pulls in cl-vips and also gives us the command-line driver we
+;; use near the end of the tutorial.
+(ql:quickload :cl-vips/cli :silent t)
+
+(defpackage #:vips-tutorial (:use #:cl))
+(in-package #:vips-tutorial)
+
+(vips:init)
+(format t "~&Using libvips ~a~%" (vips:version-string))
+#+end_src
+
+~vips:version~ returns three values if you want them separately:
+
+#+begin_src lisp :tangle no
+(multiple-value-bind (major minor micro) (vips:version)
+  (list major minor micro))          ; => (8 18 4)
+#+end_src
+
+* Creating images without any files
+
+You do not need image files to work with cl-vips. There are three easy ways to
+get an image in memory.
+
+** A blank image
+
+~vips:black~ makes an all-zero image of a given size and band count.
+
+#+begin_src lisp
+(vips:with-image (img (vips:black 64 48 :bands 3))
+  (format t "black: ~dx~d, ~d bands~%"
+          (vips:width img) (vips:height img) (vips:bands img)))
+#+end_src
+
+** From raw pixel bytes
+
+~vips:image-from-pixels~ copies a vector of =(unsigned-byte 8)= into a new
+image. The vector length must be =width * height * bands=. Here we build a
+128x128 RGB gradient by hand.
+
+#+begin_src lisp
+(defun make-gradient (width height)
+  "A WIDTH x HEIGHT RGB image: red ramps right, green ramps down, blue flat."
+  (let ((data (make-array (* width height 3) :element-type '(unsigned-byte 8))))
+    (dotimes (y height)
+      (dotimes (x width)
+        (let ((i (* 3 (+ (* y width) x))))
+          (setf (aref data (+ i 0)) (mod (* 2 x) 256)    ; R
+                (aref data (+ i 1)) (mod (* 2 y) 256)     ; G
+                (aref data (+ i 2)) 64))))               ; B
+    (vips:image-from-pixels data width height 3)))
+
+(defparameter *gradient* (make-gradient 128 128))
+(format t "gradient: ~dx~d ~a~%"
+        (vips:width *gradient*) (vips:height *gradient*)
+        (vips:image-format *gradient*))
+#+end_src
+
+** From encoded bytes (a PNG/JPEG already in memory)
+
+If you have the /bytes/ of an encoded image (say, downloaded into a vector),
+~vips:image-from-octets~ decodes them. We will use it later, after we have
+produced some encoded bytes with ~vips:write-to-octets~.
+
+* Inspecting an image
+
+Every image answers a handful of questions directly.
+
+#+begin_src lisp
+(let ((img *gradient*))
+  (format t "width          = ~d~%" (vips:width img))
+  (format t "height         = ~d~%" (vips:height img))
+  (format t "bands          = ~d~%" (vips:bands img))
+  (format t "format         = ~a~%" (vips:image-format img))
+  (format t "interpretation = ~a~%" (vips:interpretation img)))
+#+end_src
+
+- ~image-format~ returns a =band-format= keyword: =:uchar=, =:ushort=,
+  =:float=, =:double=, and so on.
+- ~interpretation~ returns the colour-space interpretation, e.g. =:srgb=,
+  =:b-w=, =:multiband=.
+
+Named metadata fields are available too:
+
+#+begin_src lisp
+(let ((img *gradient*))
+  ;; width/height are also exposed as integer metadata fields
+  (format t "meta width  = ~d~%" (vips:get-int img "width"))
+  (format t "x resolution = ~a~%" (vips:get-double img "xres")))
+#+end_src
+
+* Reading individual pixels
+
+~vips:getpoint~ returns the pixel at =(x, y)= as a list of doubles, one per
+band.
+
+#+begin_src lisp
+(let ((img *gradient*))
+  (format t "pixel (0,0)   = ~a~%" (vips:getpoint img 0 0))
+  (format t "pixel (10,20) = ~a~%" (vips:getpoint img 10 20)))
+;; (10,20) => (20.0d0 40.0d0 64.0d0): R=2*10, G=2*20, B=64
+#+end_src
+
+* Memory management
+
+An image wraps a libvips object. Freeing is *explicit and deterministic* --
+images are never released by the garbage collector, because a libvips image can
+pin a large foreign pixel buffer the GC cannot see. You have three tools:
+
+1. ~with-image~ / ~with-images~ -- bind an image (or several) and free them on
+   exit, even on a non-local exit. This is the preferred style.
+2. ~unref~ -- free an image explicitly. Safe to call more than once.
+3. ~with-image-pool~ -- free every image created within a dynamic extent; ideal
+   for loops that make an unknown number of temporaries.
+
+Since nothing is auto-freed, a dropped image leaks; call
+~(vips:set-leak-checking t)~ during development and libvips will report any
+images you forgot to free at shutdown.
+
+Using a freed image signals an error instead of crashing:
+
+#+begin_src lisp
+(let ((img (vips:black 4 4)))
+  (vips:unref img)
+  (format t "live after unref? ~a~%" (vips:image-live-p img))
+  (handler-case (vips:width img)
+    (error () (format t "touching a freed image is caught safely~%"))))
+#+end_src
+
+~with-images~ binds several images at once (freed in reverse order):
+
+#+begin_src lisp
+(vips:with-images ((a (vips:black 2 2))
+                   (b (vips:black 3 3)))
+  (format t "a=~dx~d  b=~dx~d~%"
+          (vips:width a) (vips:height a) (vips:width b) (vips:height b)))
+#+end_src
+
+A pool frees everything made inside it -- handy when a loop creates a variable
+number of images. Use ~keep~ to carry one result back out:
+
+#+begin_src lisp
+(let ((biggest
+        (vips:with-image-pool
+          (let ((winner nil))
+            (dotimes (i 4)
+              (let ((tile (vips:black (* 8 (1+ i)) 8)))  ; temporaries
+                (when (or (null winner) (> (vips:width tile) (vips:width winner)))
+                  (setf winner tile))))
+            (vips:keep winner)))))          ; survives the pool
+  (format t "kept the ~dx~d tile~%" (vips:width biggest) (vips:height biggest))
+  (vips:unref biggest))
+#+end_src
+
+* Geometric transforms
+
+Each transform returns a *new* image; the input is untouched.
+
+#+begin_src lisp
+(vips:with-image (src (vips:black 16 8 :bands 1))
+  (vips:with-images ((half   (vips:resize src 0.5))                 ; scale
+                     (piece  (vips:crop src 2 1 6 4))               ; extract area
+                     (turned (vips:rotate src :d90))                ; fixed rotation
+                     (mirror (vips:flip src :horizontal))           ; flip
+                     (framed (vips:embed src 4 2 32 16 :extend :white)))
+    (format t "resize 0.5 -> ~dx~d~%" (vips:width half) (vips:height half))
+    (format t "crop       -> ~dx~d~%" (vips:width piece) (vips:height piece))
+    (format t "rotate d90 -> ~dx~d (w/h swap)~%"
+            (vips:width turned) (vips:height turned))
+    (format t "flip       -> ~dx~d~%" (vips:width mirror) (vips:height mirror))
+    (format t "embed      -> ~dx~d, corner pixel ~a~%"
+            (vips:width framed) (vips:height framed)
+            (vips:getpoint framed 0 0))))    ; white padding => 255
+#+end_src
+
+- ~resize~ takes a scale factor (a real).
+- ~crop~ is =left top width height=.
+- ~rotate~ takes =:d0=, =:d90=, =:d180=, or =:d270=.
+- ~flip~ takes =:horizontal= or =:vertical=.
+- ~embed~ places the image in a larger frame; ~:extend~ chooses the fill
+  (=:black=, =:white=, =:copy=, =:repeat=, =:mirror=, =:background=).
+
+* Pixel and colour operations
+
+#+begin_src lisp
+(vips:with-image (src (vips:image-from-pixels
+                       (make-array 16 :element-type '(unsigned-byte 8)
+                                      :initial-element 40)
+                       4 4 1))
+  (vips:with-images ((neg   (vips:invert src))            ; 255 - v
+                     (aff   (vips:linear src 2.0 5.0))    ; a*v + b
+                     (soft  (vips:gaussblur src 1.5))     ; blur
+                     (wide  (vips:cast src :ushort)))     ; change storage type
+    (format t "invert 40      => ~a~%" (vips:getpoint neg 0 0))   ; 215
+    (format t "linear 2*40+5  => ~a~%" (vips:getpoint aff 0 0))   ; 85
+    (format t "gaussblur size => ~dx~d~%" (vips:width soft) (vips:height soft))
+    (format t "cast format    => ~a~%" (vips:image-format wide))))
+#+end_src
+
+Convert colour spaces with ~colourspace~ (note the British spelling, matching
+libvips):
+
+#+begin_src lisp
+(vips:with-image (rgb (vips:black 8 8 :bands 3))
+  (vips:with-image (grey (vips:colourspace rgb :b-w))
+    (format t "rgb ~d band -> b-w ~d band~%"
+            (vips:bands rgb) (vips:bands grey))))
+#+end_src
+
+* Working with bands
+
+Split channels out with ~extract-band~ and combine images with ~bandjoin~.
+
+#+begin_src lisp
+(vips:with-images ((one (vips:image-from-pixels
+                         (make-array 16 :element-type '(unsigned-byte 8)
+                                        :initial-element 10)
+                         4 4 1))
+                   (two (vips:image-from-pixels
+                         (make-array 32 :element-type '(unsigned-byte 8)
+                                        :initial-element 20)
+                         4 4 2)))
+  (vips:with-image (joined (vips:bandjoin one two))       ; 1 + 2 = 3 bands
+    (format t "bandjoin bands = ~d, pixel = ~a~%"
+            (vips:bands joined) (vips:getpoint joined 0 0))
+    (vips:with-image (g (vips:extract-band joined 1))     ; pull one channel
+      (format t "extract-band 1 => ~a~%" (vips:getpoint g 0 0)))))
+#+end_src
+
+* Arithmetic between two images
+
+~add~, ~subtract~, and ~multiply~ combine two images pixelwise.
+
+#+begin_src lisp
+(vips:with-images ((a (vips:image-from-pixels
+                       (make-array 16 :element-type '(unsigned-byte 8)
+                                      :initial-element 30)
+                       4 4 1))
+                   (b (vips:image-from-pixels
+                       (make-array 16 :element-type '(unsigned-byte 8)
+                                      :initial-element 45)
+                       4 4 1)))
+  (vips:with-images ((s (vips:add a b))
+                     (d (vips:subtract b a))
+                     (m (vips:multiply a b)))
+    (format t "add      = ~a~%" (vips:getpoint s 0 0))   ; 75
+    (format t "subtract = ~a~%" (vips:getpoint d 0 0))   ; 15
+    (format t "multiply = ~a~%" (vips:getpoint m 0 0)))) ; 1350
+#+end_src
+
+* Statistics
+
+#+begin_src lisp
+(vips:with-image (img (make-gradient 64 64))
+  (format t "avg     = ~,2f~%" (vips:avg img))
+  (format t "min     = ~,2f~%" (vips:image-min img))
+  (format t "max     = ~,2f~%" (vips:image-max img))
+  (format t "std dev = ~,2f~%" (vips:deviate img)))
+#+end_src
+
+* Saving and in-memory encoding
+
+Write to a file with ~save-image~ (the format follows the extension). Encode to
+a byte vector in memory with ~write-to-octets~, and decode bytes back with
+~image-from-octets~.
+
+#+begin_src lisp
+(vips:with-image (img (make-gradient 64 64))
+  ;; 1. save to a temporary PNG file, then reload it
+  (let ((path (merge-pathnames "cl-vips-tutorial.png"
+                               (uiop:temporary-directory))))
+    (vips:save-image img path)
+    (vips:with-image (reloaded (vips:load-image path))
+      (format t "reloaded ~dx~d from ~a~%"
+              (vips:width reloaded) (vips:height reloaded)
+              (file-namestring path)))
+    (ignore-errors (delete-file path)))
+
+  ;; 2. round-trip entirely in memory: encode -> bytes -> decode
+  (let ((png-bytes (vips:write-to-octets img ".png")))
+    (format t "encoded ~d bytes; PNG magic = ~x ~x~%"
+            (length png-bytes) (aref png-bytes 0) (aref png-bytes 1))
+    (vips:with-image (decoded (vips:image-from-octets png-bytes))
+      (format t "decoded back to ~dx~d~%"
+              (vips:width decoded) (vips:height decoded)))))
+#+end_src
+
+* Error handling
+
+libvips failures are signalled as ~vips:vips-error~, a subtype of ~cl:error~,
+whose message you can read with ~vips:vips-error-message~.
+
+#+begin_src lisp
+(handler-case
+    (vips:load-image "/definitely/not/here.png")
+  (vips:vips-error (e)
+    (format t "caught vips-error: ~a~%"
+            (string-trim '(#\Newline #\Space)
+                         (vips:vips-error-message e)))))
+#+end_src
+
+Out-of-bounds and bad-argument operations signal the same condition:
+
+#+begin_src lisp
+(vips:with-image (img (vips:black 4 4))
+  (handler-case (vips:crop img 0 0 100 100)
+    (vips:vips-error () (format t "crop out of bounds was rejected~%"))))
+#+end_src
+
+* Calling any operation: the generic engine
+
+The functions above are a curated core. For anything else, ~call-operation~
+drives libvips's generic =VipsOperation= API and can invoke *any* operation by
+its nickname. Inputs are a plist of libvips argument names (strings) to Lisp
+values; the value of the ~out~ argument is returned (an image, or a scalar).
+
+#+begin_src lisp
+;; image in, image out -- same as the built-in gaussblur
+(vips:with-image (img (make-gradient 64 64))
+  (vips:with-image (blurred
+                    (vips:call-operation "gaussblur" (list "in" img "sigma" 2.0d0)))
+    (format t "engine gaussblur -> ~dx~d~%"
+            (vips:width blurred) (vips:height blurred))))
+
+;; scalar output comes back as a number
+(vips:with-image (img (vips:black 8 8))
+  (format t "engine avg = ~a~%" (vips:call-operation "avg" (list "in" img))))
+
+;; enum arguments are passed as keywords
+(vips:with-image (img (make-gradient 16 16))
+  (vips:with-image (flipped
+                    (vips:call-operation "flip"
+                                         (list "in" img "direction" :horizontal)))
+    (format t "engine flip -> ~dx~d~%"
+            (vips:width flipped) (vips:height flipped))))
+#+end_src
+
+** Giving an operation a nice name
+
+~define-operation~ wraps a nickname in a tidy Lisp function. Here we expose
+libvips's Sobel edge detector, which is not one of the hand-bound functions.
+
+#+begin_src lisp
+(vips:define-operation sobel-edges "sobel" (image)
+  "Sobel edge-detection filter over IMAGE."
+  ("in" image))
+
+(vips:with-image (img (make-gradient 64 64))
+  (vips:with-image (edges (sobel-edges img))
+    (format t "sobel edges -> ~dx~d, max=~,1f~%"
+            (vips:width edges) (vips:height edges) (vips:image-max edges))))
+#+end_src
+
+Clauses can reference the function's parameters, so options map cleanly:
+
+#+begin_src lisp :tangle no
+(vips:define-operation sharpen "sharpen" (image &key (sigma 1.0))
+  "Sharpen IMAGE (needs an sRGB image)."
+  ("in" image)
+  ("sigma" (float sigma 1.0d0)))
+#+end_src
+
+The library itself defines ~image-abs~, ~sign~, ~flatten~, and ~gamma~ this
+same way -- see =src/generic.lisp=.
+
+* Introspection and auto-generated wrappers
+
+Because libvips describes its own operations, cl-vips can inspect them at
+runtime and even generate wrappers automatically.
+
+** Inspecting an operation
+
+~describe-operation~ prints an operation's arguments; the accessor functions
+return them as data.
+
+#+begin_src lisp
+(vips:describe-operation "gaussblur")
+(format t "required inputs: ~a~%" (vips:operation-required-inputs "gaussblur"))
+(format t "optional inputs: ~a~%" (vips:operation-optional-inputs "gaussblur"))
+(format t "outputs        : ~a~%" (vips:operation-outputs "min"))
+#+end_src
+
+** Operations with more than one output
+
+Some operations return several values. ~min~, for example, reports the minimum
+pixel value /and/ its position. Ask for the outputs you want with ~:outputs~
+and ~call-operation~ returns them as multiple values.
+
+#+begin_src lisp
+(vips:with-image (img (make-gradient 32 32))
+  (multiple-value-bind (value x y)
+      (vips:call-operation "min" (list "in" img) :outputs '("out" "x" "y"))
+    (format t "minimum ~,1f at (~d, ~d)~%" value x y)))
+#+end_src
+
+** Auto-generating one wrapper
+
+~defvips~ inspects an operation and defines a Lisp function for it: required
+inputs are positional, optional arguments follow as a plist.
+
+#+begin_src lisp
+(vips:defvips scale)                    ; libvips "scale": stretch to 0..255
+
+(vips:with-image (img (make-gradient 32 32))
+  (vips:with-image (stretched (scale img))
+    (format t "scale -> max ~,1f~%" (vips:image-max stretched))))
+#+end_src
+
+** Bulk-generating a whole group
+
+Operations are organised into groups (~operation-groups~ lists them).
+~defvips-all~ generates wrappers for an entire group at once. We give them a
+prefix so none of the names clash with existing functions (an ~abs~ operation
+versus ~cl:abs~, say).
+
+#+begin_src lisp
+(format t "groups: ~a~%" (vips:operation-groups))
+
+(let ((defined (vips:defvips-all :group "arithmetic"
+                                 :package *package* :prefix "vips-")))
+  (format t "generated ~d arithmetic wrappers~%" (length defined)))
+
+;; one of the freshly-minted wrappers: vips-invert
+(vips:with-image (img (make-gradient 16 16))
+  (vips:with-image (inv (vips-invert img))
+    (format t "vips-invert pixel (0,0) = ~a~%" (vips:getpoint inv 0 0))))
+#+end_src
+
+* The command-line driver
+
+The =cl-vips/cli= system wraps everything above in a command-line tool that
+works like the =vips= CLI: the first token is an operation nickname (or a
+subcommand), the input file becomes the operation's ~in~, and options are
+~name=value~ pairs.
+
+From a shell you would run (no build step needed):
+
+#+begin_src sh :tangle no
+scripts/cl-vips info photo.jpg
+scripts/cl-vips gaussblur photo.jpg blur.png sigma=3
+scripts/cl-vips resize photo.jpg small.png scale=0.5
+scripts/cl-vips describe gaussblur
+scripts/cl-vips list arithmetic
+#+end_src
+
+...or build a standalone executable:
+
+#+begin_src sh :tangle no
+sbcl --script scripts/build.lisp        # writes ./cl-vips (next to the .asd)
+./cl-vips gaussblur photo.jpg blur.png sigma=3
+#+end_src
+
+The driver is just a Lisp function, ~vips-cli:main~, taking a list of argument
+strings and returning a Unix exit code -- so we can drive it in-process here.
+It prints exactly what the command line would.
+
+#+begin_src lisp
+(let ((in  (namestring (merge-pathnames "clv-demo-in.png"
+                                        (uiop:temporary-directory))))
+      (out (namestring (merge-pathnames "clv-demo-out.png"
+                                        (uiop:temporary-directory)))))
+  (vips:with-image (img (make-gradient 48 48))
+    (vips:save-image img in))
+
+  ;; `cl-vips info <in>'
+  (vips-cli:main (list "info" in))
+
+  ;; `cl-vips gaussblur <in> <out> sigma=2'  -- note the string option
+  (let ((code (vips-cli:main (list "gaussblur" in out "sigma=2"))))
+    (format t "exit code: ~d~%" code))
+
+  (ignore-errors (delete-file in) (delete-file out)))
+#+end_src
+
+Values on the command line are parsed for you: ~sigma=2~ becomes a number,
+~direction=horizontal~ stays a string (an enum nickname), ~true~/~false~ become
+booleans, and ~a=1,2,3~ becomes an array argument.
+
+* A complete pipeline
+
+Putting it together: build a gradient, shrink it, blur it, brighten it, and
+report the result.
+
+#+begin_src lisp
+(defun thumbnail-demo ()
+  (vips:with-image (img (make-gradient 256 256))
+    (vips:with-images ((small   (vips:resize img 0.25))
+                       (blurred (vips:gaussblur small 1.0))
+                       (bright  (vips:linear blurred 1.2 0)))
+      (format t "~&pipeline: ~dx~d -> ~dx~d, avg brightness ~,1f~%"
+              (vips:width img) (vips:height img)
+              (vips:width bright) (vips:height bright)
+              (vips:avg bright))
+      ;; return encoded PNG bytes, ready to write or send anywhere
+      (vips:write-to-octets bright ".png"))))
+
+(let ((bytes (thumbnail-demo)))
+  (format t "thumbnail is ~d encoded bytes~%" (length bytes)))
+
+(format t "~&Tutorial complete.~%")
+#+end_src
+
+* Where to go next
+
+- =README.md= -- installation, the full API table, and implementation notes
+  (including the arm64 variadic-ABI detail and lazy-buffer handling).
+- =src/generic.lisp= -- the generic engine; extending it to array and blob
+  argument types is how the remaining libvips operations get covered.
+- The tests in =tests/= are runnable, file-free examples of every function:
+  #+begin_src lisp :tangle no
+  (ql:quickload :cl-vips/test)
+  (asdf:test-system :cl-vips)
+  #+end_src

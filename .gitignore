@@ -1,0 +1,8 @@
+# Built executable (scripts/build.lisp) -- lives next to cl-vips.asd
+/cl-vips
+
+# Compiled Lisp output
+*.fasl
+
+# Tangled from TUTORIAL.org
+/tutorial.lisp
