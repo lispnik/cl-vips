@@ -486,24 +486,17 @@ works like the =vips= CLI: the first token is an operation nickname (or a
 subcommand), the input file becomes the operation's ~in~, and options are
 ~name=value~ pairs.
 
-Build a standalone executable with ASDF (the =cl-vips/executable= system uses
-=program-op=), then run it:
+Build a standalone executable with =make= (which runs ASDF's =program-op= via
+the =cl-vips/executable= system), then run it:
 
 #+begin_src sh :tangle no
-sbcl --eval '(require :asdf)' --eval '(asdf:make :cl-vips/executable)' --quit
-# writes ./cl-vips next to the .asd
+make build      # writes ./cl-vips next to the .asd
 
 ./cl-vips info photo.jpg
 ./cl-vips gaussblur photo.jpg blur.png sigma=3
 ./cl-vips resize photo.jpg small.png scale=0.5
 ./cl-vips describe gaussblur
 ./cl-vips list arithmetic
-#+end_src
-
-To iterate without building, run the driver directly:
-
-#+begin_src sh :tangle no
-sbcl --script scripts/run.lisp info photo.jpg
 #+end_src
 
 The driver is just a Lisp function, ~vips-cli:main~, taking a list of argument

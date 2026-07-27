@@ -227,14 +227,12 @@ alive (images you forgot to free) at `shutdown`.
 dispatches any libvips operation by nickname, plus helper subcommands built on
 the introspection layer.
 
-Build a standalone executable with ASDF — the `cl-vips/executable` system
-declares `program-op` as its build operation, so `asdf:make` dumps `./cl-vips`
-(next to `cl-vips.asd`):
+Build a standalone executable with `make` (which runs ASDF's `program-op` — the
+`cl-vips/executable` system declares it as its build operation, dumping
+`./cl-vips` next to `cl-vips.asd`):
 
 ```sh
-sbcl --eval '(require :asdf)' \
-     --eval '(asdf:make :cl-vips/executable)' --quit
-# writes ./cl-vips
+make build      # equivalently: asdf:make :cl-vips/executable
 
 ./cl-vips version
 ./cl-vips info photo.jpg
@@ -258,14 +256,22 @@ the image and the executable stays portable.
   integers, floats, comma-lists (`a=1,2,3` → an array), or strings (enum
   nicknames like `direction=horizontal`).
 
-To iterate without building, run the driver directly (it is just a Lisp
-function, `vips-cli:main`, taking a list of argument strings):
+To iterate without building, load the CLI system in a REPL and call the driver
+directly — it is just a function, `vips-cli:main`, taking a list of argument
+strings and returning an exit code:
 
-```sh
-sbcl --script scripts/run.lisp info photo.jpg
+```lisp
+(asdf:load-system :cl-vips/cli)
+(vips-cli:main '("info" "photo.jpg"))
 ```
 
 ## Running the tests
+
+```sh
+make test        # exits nonzero if any check fails
+```
+
+or from a REPL:
 
 ```lisp
 (ql:quickload :cl-vips/test)
@@ -275,6 +281,16 @@ sbcl --script scripts/run.lisp info photo.jpg
 The suite (212 checks across core, I/O, operations, the generic engine, the
 command-line driver and error handling) builds its fixtures from raw memory and
 programmatic ramps, so it needs **no sample image files**.
+
+## Make targets
+
+| Target | Does |
+|--------|------|
+| `make build` | dump the `./cl-vips` executable via ASDF `program-op` |
+| `make test` | run the test suite (nonzero exit on failure) |
+| `make tutorial` | tangle `TUTORIAL.org` into `tutorial.lisp` (needs Emacs) |
+| `make tutorial-run` | tangle and run the tutorial end to end |
+| `make clean` | remove the executable, tangled tutorial and stray fasls |
 
 ## Implementation notes
 
