@@ -1,5 +1,0 @@
-#!/bin/sh
-# Dev wrapper: run the cl-vips CLI without building an executable.
-#   scripts/cl-vips info photo.jpg
-here="$(cd "$(dirname "$0")" && pwd)"
-exec sbcl --script "$here/run.lisp" "$@"

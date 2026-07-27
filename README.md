@@ -227,18 +227,27 @@ alive (images you forgot to free) at `shutdown`.
 dispatches any libvips operation by nickname, plus helper subcommands built on
 the introspection layer.
 
-Run it during development without building anything:
+Build a standalone executable with ASDF — the `cl-vips/executable` system
+declares `program-op` as its build operation, so `asdf:make` dumps `./cl-vips`
+(next to `cl-vips.asd`):
 
 ```sh
-scripts/cl-vips version
-scripts/cl-vips info photo.jpg
-scripts/cl-vips gaussblur photo.jpg blur.png sigma=3
-scripts/cl-vips resize photo.jpg small.png scale=0.5
-scripts/cl-vips flip photo.jpg flipped.png direction=horizontal
-scripts/cl-vips describe gaussblur
-scripts/cl-vips list arithmetic
-scripts/cl-vips groups
+sbcl --eval '(require :asdf)' \
+     --eval '(asdf:make :cl-vips/executable)' --quit
+# writes ./cl-vips
+
+./cl-vips version
+./cl-vips info photo.jpg
+./cl-vips gaussblur photo.jpg blur.png sigma=3
+./cl-vips resize photo.jpg small.png scale=0.5
+./cl-vips flip photo.jpg flipped.png direction=horizontal
+./cl-vips describe gaussblur
+./cl-vips list arithmetic
+./cl-vips groups
 ```
+
+libvips is loaded lazily at run time (by `vips:init`), so it is not baked into
+the image and the executable stays portable.
 
 - The first token is an operation nickname (or a subcommand: `info`, `list`,
   `groups`, `describe`, `version`, `run`, `help`).
@@ -249,15 +258,12 @@ scripts/cl-vips groups
   integers, floats, comma-lists (`a=1,2,3` → an array), or strings (enum
   nicknames like `direction=horizontal`).
 
-Build a standalone executable (written as `./cl-vips`, next to `cl-vips.asd`):
+To iterate without building, run the driver directly (it is just a Lisp
+function, `vips-cli:main`, taking a list of argument strings):
 
 ```sh
-sbcl --script scripts/build.lisp     # writes ./cl-vips
-./cl-vips gaussblur photo.jpg blur.png sigma=3
+sbcl --script scripts/run.lisp info photo.jpg
 ```
-
-libvips is loaded lazily at run time (by `vips:init`), so the executable stays
-portable across the saved image.
 
 ## Running the tests
 

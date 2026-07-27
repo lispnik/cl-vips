@@ -28,6 +28,23 @@
                 :pathname "src"
                 :components ((:file "cli")))))
 
+;;; Build the standalone `cl-vips' executable with ASDF:
+;;;
+;;;   sbcl --eval '(require :asdf)' --eval '(asdf:make :cl-vips/executable)'
+;;;
+;;; asdf:make runs the :build-operation (program-op), which dumps an
+;;; executable named by :build-pathname (./cl-vips, next to this .asd) that
+;;; starts at :entry-point.  libvips is loaded lazily at run time by vips:init,
+;;; not baked into the image.
+(asdf:defsystem #:cl-vips/executable
+  :description "Standalone executable build of the cl-vips CLI."
+  :author "burnsidemk@gmail.com"
+  :license "LGPL-2.1-or-later"
+  :depends-on (#:cl-vips/cli)
+  :build-operation "program-op"
+  :build-pathname "cl-vips"
+  :entry-point "vips-cli:toplevel")
+
 (asdf:defsystem #:cl-vips/test
   :description "Test suite for cl-vips."
   :author "burnsidemk@gmail.com"
