@@ -3,10 +3,11 @@
 (in-package #:vips/test)
 
 (defparameter *scratch-dir*
-  (let ((dir #p"/private/tmp/claude-501/-Users-mkennedy-Projects-common-lisp-vips/d6e87b3b-ea9b-4433-8ea9-67e37db4ea32/scratchpad/vips-tests/"))
+  (let ((dir (merge-pathnames "cl-vips-tests/" (uiop:temporary-directory))))
     (ensure-directories-exist dir)
     dir)
-  "Directory for temporary files created by the tests.")
+  "Directory for temporary files created by the tests (under the system
+temporary directory, so it is portable across machines).")
 
 (defvar *temp-counter* 0)
 
