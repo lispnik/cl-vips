@@ -63,6 +63,11 @@ more than once is a no-op. ARGV0 is passed to vips_init for diagnostics.
 Signals VIPS-ERROR if initialization fails."
   (unless *initialized*
     (load-libraries)
+    ;; libvips does IEEE arithmetic that legitimately produces NaN/inf; SBCL
+    ;; enables floating-point traps by default, which turns those into
+    ;; FLOATING-POINT-INVALID-OPERATION errors when control returns to Lisp.
+    ;; Mask the traps so foreign math behaves as C expects.
+    #+sbcl (sb-int:set-floating-point-modes :traps nil)
     (unless (zerop (%vips-init argv0))
       (raise-vips-error))
     (setf *initialized* t))
