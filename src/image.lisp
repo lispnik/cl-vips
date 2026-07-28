@@ -443,3 +443,82 @@ inferred from the array's element type. The data is copied."
                              :int w :int h :int b
                              band-format fmt
                              :pointer)))))
+
+;;; ---------------------------------------------------------------------------
+;;; Metadata: setting, removing and listing fields
+;;;
+;;; These mutate IMAGE's metadata in place (they do not touch pixels). Set them
+;;; on images you own; setting on a shared image affects every reference.
+;;; ---------------------------------------------------------------------------
+
+(cffi:defcfun ("vips_image_set_int" %vips-image-set-int) :void
+  (image :pointer) (field :string) (value :int))
+(cffi:defcfun ("vips_image_set_double" %vips-image-set-double) :void
+  (image :pointer) (field :string) (value :double))
+(cffi:defcfun ("vips_image_set_string" %vips-image-set-string) :void
+  (image :pointer) (field :string) (value :string))
+(cffi:defcfun ("vips_image_set_blob_copy" %vips-image-set-blob-copy) :void
+  (image :pointer) (field :string) (data :pointer) (length :unsigned-long))
+(cffi:defcfun ("vips_image_remove" %vips-image-remove) :int
+  (image :pointer) (field :string))
+(cffi:defcfun ("vips_image_get_fields" %vips-image-get-fields) :pointer
+  (image :pointer))
+(cffi:defcfun ("vips_image_get_blob" %vips-image-get-blob) :int
+  (image :pointer) (field :string) (data :pointer) (length :pointer))
+(cffi:defcfun ("g_strfreev" %g-strfreev) :void (str-array :pointer))
+
+(defun set-int (image field value)
+  "Set integer metadata FIELD of IMAGE. Returns VALUE."
+  (%vips-image-set-int (pointer-of image) field (round value))
+  value)
+
+(defun set-double (image field value)
+  "Set double metadata FIELD of IMAGE. Returns VALUE."
+  (%vips-image-set-double (pointer-of image) field (to-double value))
+  value)
+
+(defun set-string (image field value)
+  "Set string metadata FIELD of IMAGE. Returns VALUE."
+  (%vips-image-set-string (pointer-of image) field (string value))
+  value)
+
+(defun set-blob (image field octets)
+  "Set binary metadata FIELD of IMAGE to a copy of OCTETS (a vector of
+(unsigned-byte 8)). Returns OCTETS."
+  (let ((n (length octets)))
+    (cffi:with-foreign-object (buffer :uint8 (max n 1))
+      (dotimes (i n)
+        (setf (cffi:mem-aref buffer :uint8 i) (aref octets i)))
+      (%vips-image-set-blob-copy (pointer-of image) field buffer n)))
+  octets)
+
+(defun remove-field (image field)
+  "Remove metadata FIELD from IMAGE. Returns T if the field was present."
+  (not (zerop (%vips-image-remove (pointer-of image) field))))
+
+(defun get-fields (image)
+  "Return the names of all metadata fields on IMAGE, as a list of strings."
+  (let ((array (%vips-image-get-fields (pointer-of image))))
+    (if (cffi:null-pointer-p array)
+        '()
+        (unwind-protect
+             (loop for i from 0
+                   for p = (cffi:mem-aref array :pointer i)
+                   until (cffi:null-pointer-p p)
+                   collect (cffi:foreign-string-to-lisp p))
+          (%g-strfreev array)))))
+
+(defun get-blob (image field)
+  "Return the binary metadata FIELD of IMAGE as a fresh (unsigned-byte 8)
+vector. Signals VIPS-ERROR if the field is absent or not a blob."
+  (cffi:with-foreign-objects ((data :pointer) (length :unsigned-long))
+    (let ((status (%vips-image-get-blob (pointer-of image) field data length)))
+      (unless (zerop status)
+        (raise-vips-error))
+      (let* ((ptr (cffi:mem-ref data :pointer))
+             (n (cffi:mem-ref length :unsigned-long))
+             (out (make-array n :element-type '(unsigned-byte 8))))
+        (unless (cffi:null-pointer-p ptr)
+          (dotimes (i n)
+            (setf (aref out i) (cffi:mem-aref ptr :uint8 i))))
+        out))))

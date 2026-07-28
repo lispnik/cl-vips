@@ -63,8 +63,10 @@ search path automatically; adjust `vips:*library-directories*` if yours differ.
 | Lifecycle | `init` `shutdown` `initialized-p` `version` `version-string` `set-leak-checking` |
 | Images | `image` `imagep` `image-live-p` `unref` `with-image` `with-images` `with-image-pool` `keep` |
 | I/O | `load-image` `save-image` `image-from-octets` `write-to-octets` `image-from-pixels` |
+| Streaming | `load-image-from-stream` `save-image-to-stream` |
 | Raw pixels | `write-to-memory` `image-to-array` `image-from-array` |
 | Introspection | `width` `height` `bands` `image-format` `interpretation` `filename` `get-double` `get-int` `get-string` `getpoint` |
+| Metadata | `set-int` `set-double` `set-string` `set-blob` `get-blob` `remove-field` `get-fields` |
 | Create | `black` |
 | Geometry | `resize` `crop` `embed` `flip` `rotate` |
 | Pixel/colour | `invert` `linear` `gaussblur` `colourspace` `cast` |
@@ -252,6 +254,43 @@ Beyond one-pixel `getpoint`, you can move whole images to and from Lisp arrays:
 `image-to-array` / `image-from-array` round-trip exactly, including non-uchar
 formats (`:ushort`, `:float`, `:double`, …).
 
+## Metadata
+
+Beyond reading fields (`get-int`/`get-double`/`get-string`), you can set,
+remove and list them:
+
+```lisp
+(vips:set-string img "exif-ifd0-ImageDescription" "sunset")
+(vips:set-int img "orientation" 6)
+(vips:get-fields img)               ; => ("width" "height" ... "orientation")
+(vips:remove-field img "orientation")
+(vips:set-blob img "my-profile" icc-bytes)   ; and (vips:get-blob img "my-profile")
+```
+
+These mutate the image's metadata in place (pixels untouched); set them on
+images you own.
+
+## Streaming
+
+Load from or save to any binary stream — a file, socket, or in-memory stream —
+without a filename, via libvips custom sources/targets:
+
+```lisp
+;; save through a stream
+(with-open-file (out "photo.png" :direction :output
+                                 :element-type '(unsigned-byte 8) :if-exists :supersede)
+  (vips:save-image-to-stream img ".png" out))
+
+;; load through a stream (keep it open until the image is freed)
+(with-open-file (in "photo.jpg" :element-type '(unsigned-byte 8))
+  (vips:with-image (img (vips:load-image-from-stream in))
+    (vips:width img)))
+```
+
+The stream must have element type `(unsigned-byte 8)`. Seekable streams (files)
+support the full range of loaders; non-seekable ones (sockets, pipes) work with
+formats libvips can read sequentially.
+
 ## Command-line driver
 
 `cl-vips/cli` provides a command-line tool that mirrors the `vips` CLI: it
@@ -309,7 +348,7 @@ or from a REPL:
 (asdf:test-system :cl-vips)      ; or (vips/test:run-tests)
 ```
 
-The suite (233 checks across core, I/O, operations, the generic engine, the
+The suite (245 checks across core, I/O, operations, the generic engine, the
 command-line driver and error handling) builds its fixtures from raw memory and
 programmatic ramps, so it needs **no sample image files**.
 

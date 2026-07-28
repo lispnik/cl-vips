@@ -50,6 +50,17 @@
    #:get-int
    #:get-string
    #:getpoint
+   ;; metadata mutation
+   #:set-int
+   #:set-double
+   #:set-string
+   #:set-blob
+   #:get-blob
+   #:remove-field
+   #:get-fields
+   ;; streaming
+   #:load-image-from-stream
+   #:save-image-to-stream
 
    ;; creation
    #:black

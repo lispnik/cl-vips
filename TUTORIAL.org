@@ -47,10 +47,10 @@ loads the foreign libraries and initializes libvips. It is idempotent.
 ;;;; tutorial.lisp -- tangled from TUTORIAL.org.  Do not edit by hand.
 (load (merge-pathnames "quicklisp/setup.lisp" (user-homedir-pathname)))
 
-;; Point ASDF at the directory containing cl-vips.asd. Adjust as needed;
-;; this default matches the repository layout.
-(pushnew #p"/Users/mkennedy/Projects/common-lisp/vips/" asdf:*central-registry*
-         :test #'equal)
+;; Make the cl-vips systems loadable. Run from the repository root (as
+;; `make tutorial-run' does) and the current directory is enough; otherwise
+;; replace (uiop:getcwd) with the directory containing cl-vips.asd.
+(pushnew (uiop:getcwd) asdf:*central-registry* :test #'equal)
 
 ;; cl-vips/cli pulls in cl-vips and also gives us the command-line driver we
 ;; use near the end of the tutorial.

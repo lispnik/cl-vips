@@ -16,7 +16,8 @@
                              (:file "core")
                              (:file "image")
                              (:file "operations")
-                             (:file "generic"))))
+                             (:file "generic")
+                             (:file "streaming"))))
   :in-order-to ((asdf:test-op (asdf:test-op #:cl-vips/test))))
 
 (asdf:defsystem #:cl-vips/cli

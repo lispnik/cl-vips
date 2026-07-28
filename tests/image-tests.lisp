@@ -138,3 +138,49 @@
         (is (= 5 w)) (is (= 4 h)) (is (= 3 b))
         (is (eq :uchar format))
         (is (= 200 (aref octets 0)))))))
+
+;;; --- Metadata mutation ---------------------------------------------------
+
+(test metadata-round-trip
+  "Setting then getting int/double/string/blob metadata round-trips."
+  (with-fixture initialized ()
+    (vips:with-image (img (solid-image 8 8 :bands 3))
+      (vips:set-int img "cl-vips-int" 42)
+      (vips:set-double img "cl-vips-dbl" 3.5d0)
+      (vips:set-string img "cl-vips-str" "hello")
+      (vips:set-blob img "cl-vips-blob" #(1 2 3 4))
+      (is (= 42 (vips:get-int img "cl-vips-int")))
+      (is (approx= 3.5d0 (vips:get-double img "cl-vips-dbl")))
+      (is (string= "hello" (vips:get-string img "cl-vips-str")))
+      (is (equalp #(1 2 3 4) (vips:get-blob img "cl-vips-blob"))))))
+
+(test metadata-fields-and-remove
+  "get-fields lists a set field, and remove-field deletes it."
+  (with-fixture initialized ()
+    (vips:with-image (img (solid-image 4 4))
+      (vips:set-int img "temp-field" 7)
+      (is (member "temp-field" (vips:get-fields img) :test #'string=))
+      (is-true (vips:remove-field img "temp-field"))
+      (is (not (member "temp-field" (vips:get-fields img) :test #'string=)))
+      ;; removing an absent field returns NIL, not an error
+      (is-false (vips:remove-field img "temp-field")))))
+
+;;; --- Streaming (custom source / target) ----------------------------------
+
+(test stream-round-trip
+  "Save an image to a binary stream, then load it back from one -- exercising
+the custom target write callback and the source read/seek callbacks."
+  (with-fixture initialized ()
+    (with-temp-file (path "png")
+      (vips:with-image (img (ramp-image 12 9))
+        (with-open-file (out path :direction :output
+                                  :element-type '(unsigned-byte 8)
+                                  :if-exists :supersede)
+          (vips:save-image-to-stream img ".png" out)))
+      (is-true (probe-file path))
+      (with-open-file (in path :element-type '(unsigned-byte 8))
+        (vips:with-image (loaded (vips:load-image-from-stream in))
+          (is (= 12 (vips:width loaded)))
+          (is (= 9 (vips:height loaded)))
+          ;; ramp pixel (2,3) = 2+3 = 5 survives the round trip
+          (is (approx= 5.0d0 (first (vips:getpoint loaded 2 3)))))))))
