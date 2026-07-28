@@ -535,6 +535,24 @@ Example:
                        (list ,@(loop for (arg form) in clauses
                                      collect arg collect form))))))
 
+;; Operations that take OPTIONAL arguments are defined through the engine
+;; rather than C-variadic calls, which are unreliable for option passing on
+;; some CFFI backends (e.g. ECL on arm64). Same signatures as before.
+
+(define-operation black "black" (width height &key (bands 1))
+  "Create a new all-black image of WIDTH x HEIGHT with BANDS channels."
+  ("width" width) ("height" height) ("bands" bands))
+
+(define-operation embed "embed" (image x y width height &key (extend :black))
+  "Embed IMAGE in a WIDTH x HEIGHT frame at offset (X, Y), filling new pixels
+according to EXTEND (an EXTEND-ENUM keyword). Returns a new image."
+  ("in" image) ("x" x) ("y" y) ("width" width) ("height" height)
+  ("extend" extend))
+
+(define-operation extract-band "extract_band" (image band &key (n 1))
+  "Extract N bands from IMAGE starting at index BAND. Returns a new image."
+  ("in" image) ("band" band) ("n" n))
+
 ;; A handful of operations we did NOT hand-bind, now available for free.
 
 (define-operation image-abs "abs" (image)

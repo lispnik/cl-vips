@@ -171,3 +171,59 @@
       (is (approx= 60.0d0 (vips:image-min img)))
       (is (approx= 60.0d0 (vips:image-max img)))
       (is (approx= 0.0d0 (vips:deviate img))))))
+
+;;; --- Property / invariant tests ------------------------------------------
+
+(test property-invert-involutive
+  "Inverting twice restores the original pixels."
+  (with-fixture initialized ()
+    (vips:with-image (img (ramp-image 16 16))
+      (vips:with-images ((once (vips:invert img))
+                         (twice (vips:invert once)))
+        (dolist (xy '((0 0) (5 7) (15 15)))
+          (is (approx= (first (vips:getpoint img (first xy) (second xy)))
+                       (first (vips:getpoint twice (first xy) (second xy))))))))))
+
+(test property-flip-twice-identity
+  "Flipping horizontally twice restores the image."
+  (with-fixture initialized ()
+    (vips:with-image (img (ramp-image 12 8))
+      (vips:with-images ((f1 (vips:flip img :horizontal))
+                         (f2 (vips:flip f1 :horizontal)))
+        (is (approx= (first (vips:getpoint img 3 5))
+                     (first (vips:getpoint f2 3 5))))
+        (is (approx= (first (vips:getpoint img 11 7))
+                     (first (vips:getpoint f2 11 7))))))))
+
+(test property-rotate-360-identity
+  "Four 90-degree rotations restore the image and its dimensions."
+  (with-fixture initialized ()
+    (vips:with-image (img (ramp-image 9 5))
+      (vips:with-images ((r1 (vips:rotate img :d90))
+                         (r2 (vips:rotate r1 :d90))
+                         (r3 (vips:rotate r2 :d90))
+                         (r4 (vips:rotate r3 :d90)))
+        (is (= 9 (vips:width r4)))
+        (is (= 5 (vips:height r4)))
+        (is (approx= (first (vips:getpoint img 4 2))
+                     (first (vips:getpoint r4 4 2))))))))
+
+(test property-add-subtract-inverse
+  "(a + b) - b = a, pixelwise."
+  (with-fixture initialized ()
+    (vips:with-images ((a (solid-image 8 8 :value 60))
+                       (b (solid-image 8 8 :value 25)))
+      (vips:with-images ((sum (vips:add a b))
+                         (back (vips:subtract sum b)))
+        (is (approx= 60.0d0 (first (vips:getpoint back 0 0))))))))
+
+;;; --- Large image (lazy pipeline) -----------------------------------------
+
+(test large-image-pipeline
+  "A large image flows through a lazy pipeline without materialising fully."
+  (with-fixture initialized ()
+    (vips:with-image (big (vips:black 4000 3000 :bands 3))
+      (is (= 4000 (vips:width big)))
+      (vips:with-image (small (vips:resize big 0.1))
+        (is (= 400 (vips:width small)))
+        (is (approx= 0.0d0 (vips:avg small)))))))

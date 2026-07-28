@@ -57,3 +57,31 @@ jobs:
         run: |
           make build
           ./cl-vips version
+
+  smoke-ecl:
+    name: ubuntu-latest · ECL (smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ECL and libvips
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ecl libvips-dev libvips-tools
+
+      - name: Cache Quicklisp
+        uses: actions/cache@v4
+        with:
+          path: ~/quicklisp
+          key: quicklisp-ecl-ubuntu-v1
+
+      - name: Install Quicklisp (ECL)
+        run: |
+          if [ ! -f "$HOME/quicklisp/setup.lisp" ]; then
+            curl -sSLO https://beta.quicklisp.org/quicklisp.lisp
+            echo '(load "quicklisp.lisp") (quicklisp-quickstart:install)' > /tmp/ql.lisp
+            ecl --shell /tmp/ql.lisp
+          fi
+
+      - name: ECL smoke test
+        run: ecl --shell ci/smoke.lisp

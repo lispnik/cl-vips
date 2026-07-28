@@ -59,12 +59,11 @@
 
 ;; vips_init is not reentrant, and lazy initialization can be reached from
 ;; several threads at once (libvips operations are otherwise thread-safe). Guard
-;; the one-time setup with a lock.
-#+sbcl (defvar *init-lock* (sb-thread:make-mutex :name "cl-vips-init"))
+;; the one-time setup with a (portable) lock.
+(defvar *init-lock* (bordeaux-threads:make-lock "cl-vips-init"))
 
 (defmacro with-init-lock (&body body)
-  #+sbcl `(sb-thread:with-mutex (*init-lock*) ,@body)
-  #-sbcl `(progn ,@body))
+  `(bordeaux-threads:with-lock-held (*init-lock*) ,@body))
 
 (defun init (&optional (argv0 "cl-vips"))
   "Load the foreign libraries and initialize libvips. Idempotent and

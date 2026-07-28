@@ -360,3 +360,23 @@ input image untouched (the engine draws on a private memory copy)."
         (is (equal '(0 0 0) (mapcar #'round (vips:getpoint drawn 0 0))))
         ;; and the ORIGINAL image is unchanged
         (is (equal '(0 0 0) (mapcar #'round (vips:getpoint img 10 10))))))))
+
+;;; --- VipsArrayImage box/unbox (the output path no common op exercises) ----
+
+(test array-image-boxing-round-trip
+  "%set-array-image / %get-array-image round-trip a list of images with
+balanced reference counts."
+  (with-fixture initialized ()
+    (vips::ensure-gtypes)
+    (vips:with-images ((a (solid-image 4 4 :value 10))
+                       (b (solid-image 5 5 :value 20)))
+      (vips::%with-gvalue (gv (vips::%gt :array-image))
+        (vips::%set-array-image gv (list a b))
+        (let ((out (vips::%get-array-image gv)))
+          (unwind-protect
+               (progn
+                 (is (= 2 (length out)))
+                 (is (= 4 (vips:width (first out))))
+                 (is (= 5 (vips:width (second out))))
+                 (is (approx= 10.0d0 (first (vips:getpoint (first out) 0 0)))))
+            (mapc #'vips:unref out)))))))

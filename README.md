@@ -5,14 +5,14 @@
 Common Lisp CFFI bindings to [libvips](https://www.libvips.org/), a fast,
 low-memory image-processing library.
 
-Tested with **SBCL** + **libvips 8.18** on Linux and macOS, using **CFFI** for
-the FFI and **FiveAM** for the test suite. CI runs the suite on
-`ubuntu-latest` and `macos-latest`.
+Tested with **SBCL** and **ECL** + **libvips 8.15+** on Linux and macOS, using
+**CFFI** for the FFI and **FiveAM** for the test suite. CI runs the full suite
+on `ubuntu-latest` and `macos-latest` under SBCL, plus a smoke test under ECL.
 
 ## Requirements
 
-- SBCL
-- Quicklisp (for `cffi`, and `fiveam` for the tests)
+- SBCL or ECL
+- Quicklisp (for `cffi` and `bordeaux-threads`, and `fiveam` for the tests)
 - libvips and its glib/gobject dependencies on the shared-library search path
   - macOS: `brew install vips`
   - Debian/Ubuntu: `apt install libvips42`
@@ -360,7 +360,7 @@ or from a REPL:
 (asdf:test-system :cl-vips)      ; or (vips/test:run-tests)
 ```
 
-The suite (256 checks across core, I/O, operations, the generic engine, the
+The suite (272 checks across core, I/O, operations, the generic engine, the
 command-line driver and error handling) builds its fixtures from raw memory and
 programmatic ramps, so it needs **no sample image files**.
 

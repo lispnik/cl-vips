@@ -13,15 +13,9 @@
 ;;; Creation
 ;;; ---------------------------------------------------------------------------
 
-(defun black (width height &key (bands 1))
-  "Create a new all-black image of WIDTH x HEIGHT with BANDS channels."
-  (ensure-init)
-  (with-new-image (out)
-    (cffi:foreign-funcall-varargs "vips_black"
-                                  (:pointer out :int width :int height)
-                                  :string "bands" :int bands
-                                  :pointer (cffi:null-pointer)
-                                  :int)))
+;; BLACK is defined via the generic engine in generic.lisp: it passes an
+;; optional argument (bands), and C-variadic option passing is unreliable on
+;; some CFFI backends (ECL/arm64), whereas the engine sets GObject properties.
 
 ;;; ---------------------------------------------------------------------------
 ;;; Geometry / transforms
@@ -50,19 +44,8 @@ image."
                                   :pointer (cffi:null-pointer)
                                   :int)))
 
-(defun embed (image x y width height &key (extend :black))
-  "Embed IMAGE in a WIDTH x HEIGHT frame at offset (X, Y), filling new pixels
-according to EXTEND (an EXTEND-ENUM keyword). Returns a new image."
-  (with-new-image (out)
-    (cffi:foreign-funcall-varargs "vips_embed"
-                                  (:pointer (pointer-of image)
-                                   :pointer out
-                                   :int x :int y
-                                   :int width :int height)
-                                  :string "extend"
-                                  :int (cffi:foreign-enum-value 'extend-enum extend)
-                                  :pointer (cffi:null-pointer)
-                                  :int)))
+;; EMBED is defined via the generic engine in generic.lisp (it takes an
+;; optional EXTEND argument -- see the note on BLACK above).
 
 (defun flip (image direction)
   "Flip IMAGE along DIRECTION (:HORIZONTAL or :VERTICAL). Returns a new image."
@@ -144,16 +127,8 @@ e.g. :B-W or :SRGB). Returns a new image."
 ;;; Bands
 ;;; ---------------------------------------------------------------------------
 
-(defun extract-band (image band &key (n 1))
-  "Extract N bands from IMAGE starting at index BAND. Returns a new image."
-  (with-new-image (out)
-    (cffi:foreign-funcall-varargs "vips_extract_band"
-                                  (:pointer (pointer-of image)
-                                   :pointer out
-                                   :int band)
-                                  :string "n" :int n
-                                  :pointer (cffi:null-pointer)
-                                  :int)))
+;; EXTRACT-BAND is defined via the generic engine in generic.lisp (it takes an
+;; optional N argument -- see the note on BLACK above).
 
 (defun bandjoin (image1 image2)
   "Join the bands of IMAGE1 and IMAGE2 (IMAGE1's bands first). Returns a new

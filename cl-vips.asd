@@ -5,7 +5,7 @@
   :author "burnsidemk@gmail.com"
   :license "LGPL-2.1-or-later"
   :version "0.1.0"
-  :depends-on (#:cffi)
+  :depends-on (#:cffi #:bordeaux-threads)
   :serial t
   :components ((:module "src"
                 :serial t

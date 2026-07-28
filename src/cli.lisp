@@ -177,12 +177,14 @@ NIL if it has none (a creator)."
 (defun binary-stdin ()
   #+sbcl (sb-sys:make-fd-stream 0 :input t :element-type '(unsigned-byte 8)
                                  :name "stdin")
-  #-sbcl (error "binary stdin is not supported on this Lisp"))
+  #+ecl (ext:make-stream-from-fd 0 :input :element-type '(unsigned-byte 8))
+  #-(or sbcl ecl) (error "reading images from stdin is not supported on this Lisp"))
 
 (defun binary-stdout ()
   #+sbcl (sb-sys:make-fd-stream 1 :output t :element-type '(unsigned-byte 8)
                                  :name "stdout")
-  #-sbcl (error "binary stdout is not supported on this Lisp"))
+  #+ecl (ext:make-stream-from-fd 1 :output :element-type '(unsigned-byte 8))
+  #-(or sbcl ecl) (error "writing images to stdout is not supported on this Lisp"))
 
 (defparameter *usage*
   "cl-vips -- a command-line driver for libvips
@@ -229,9 +231,8 @@ Examples:
       (t (cmd-run args)))))
 
 (defun cli-args ()
-  "The user's arguments, both when run as a saved executable and under
-`sbcl --script'."
-  (rest sb-ext:*posix-argv*))
+  "The user's command-line arguments, portably across implementations."
+  (uiop:command-line-arguments))
 
 (defun main (&optional (args (cli-args)))
   "Run the CLI over ARGS. Returns a Unix exit code (0 ok, 1 on error)."
@@ -250,4 +251,4 @@ Examples:
 
 (defun toplevel ()
   "Entry point for a saved executable."
-  (sb-ext:exit :code (main)))
+  (uiop:quit (main)))
