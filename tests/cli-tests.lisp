@@ -127,3 +127,53 @@ bind CODE-VAR to the returned exit code and return (values output code)."
   (is (approx= 0.5d0 (vips-cli::parse-value "0.5")))
   (is (equal '(1 2 3) (vips-cli::parse-value "1,2,3")))
   (is (string= "horizontal" (vips-cli::parse-value "horizontal"))))
+
+;;; --- CLI: draw ops, creators, image-file options -------------------------
+
+(test cli-draw-operation
+  "The CLI runs an in-place draw op (infile -> the op's image input)."
+  (with-fixture initialized ()
+    (with-temp-file (in "png")
+      (with-temp-file (out "png")
+        (make-png in :width 20 :height 20 :value 0)
+        (let ((code (with-output-to-string (*standard-output*)
+                      (vips-cli:main (list "draw_circle" (namestring in)
+                                           (namestring out)
+                                           "ink=255,0,0" "cx=10" "cy=10"
+                                           "radius=5" "fill=true")))))
+          (declare (ignore code))
+          (is (probe-file out))
+          (vips:with-image (drawn (vips:load-image out))
+            (is (equal '(255 0 0) (mapcar #'round (vips:getpoint drawn 10 10))))))))))
+
+(test cli-creator-operation
+  "The CLI runs a creator (no image input; first positional is the output)."
+  (with-fixture initialized ()
+    (with-temp-file (out "png")
+      (multiple-value-bind (text code)
+          (capturing (c) (vips-cli:main (list "black" (namestring out)
+                                              "width=16" "height=12" "bands=3")))
+        (declare (ignore text))
+        (is (= 0 code))
+        (is (probe-file out))
+        (vips:with-image (img (vips:load-image out))
+          (is (= 16 (vips:width img)))
+          (is (= 12 (vips:height img))))))))
+
+(test cli-image-file-option
+  "An @FILE option loads a second image (composite2 overlay=@file)."
+  (with-fixture initialized ()
+    (with-temp-file (base "png")
+      (with-temp-file (over "png")
+        (with-temp-file (out "png")
+          (make-png base :width 16 :height 16 :value 100)
+          (make-png over :width 16 :height 16 :value 40)
+          (let ((code (with-output-to-string (*standard-output*)
+                        (vips-cli:main (list "composite2" (namestring base)
+                                             (namestring out)
+                                             (format nil "overlay=@~a" (namestring over))
+                                             "mode=over")))))
+            (declare (ignore code))
+            (is (probe-file out))
+            (vips:with-image (img (vips:load-image out))
+              (is (= 16 (vips:width img))))))))))

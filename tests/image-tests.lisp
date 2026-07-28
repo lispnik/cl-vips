@@ -184,3 +184,13 @@ the custom target write callback and the source read/seek callbacks."
           (is (= 9 (vips:height loaded)))
           ;; ramp pixel (2,3) = 2+3 = 5 survives the round trip
           (is (approx= 5.0d0 (first (vips:getpoint loaded 2 3)))))))))
+
+(test save-and-load-with-options
+  "load-image / save-image accept a libvips option string."
+  (with-fixture initialized ()
+    (with-temp-file (path "jpg")
+      (vips:with-image (img (ramp-image 32 32))
+        (vips:save-image img path :options "Q=20"))          ; JPEG quality
+      (is-true (probe-file path))
+      (vips:with-image (loaded (vips:load-image path :options "access=sequential"))
+        (is (= 32 (vips:width loaded)))))))

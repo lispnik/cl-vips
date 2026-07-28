@@ -151,20 +151,30 @@ Signals VIPS-ERROR on non-zero status."
 ;;; Loading & saving
 ;;; ---------------------------------------------------------------------------
 
-(defun load-image (path)
-  "Load the image at PATH (a pathname or string) and return an IMAGE."
+(defun %filename-with-options (namestring options)
+  "Append libvips filename OPTIONS (a string such as \"Q=90,strip\") to
+NAMESTRING as \"NAMESTRING[OPTIONS]\", the form libvips loaders/savers parse."
+  (if (and options (plusp (length options)))
+      (format nil "~a[~a]" namestring options)
+      namestring))
+
+(defun load-image (path &key options)
+  "Load the image at PATH (a pathname or string) and return an IMAGE. OPTIONS
+is an optional libvips loader option string, e.g. \"access=sequential\" or
+\"page=2\"."
   (ensure-init)
-  (let ((namestring (namestring (pathname path))))
+  (let ((namestring (%filename-with-options (namestring (pathname path)) options)))
     (wrap-image
      (cffi:foreign-funcall-varargs "vips_image_new_from_file"
                                    (:string namestring)
                                    :pointer (cffi:null-pointer)
                                    :pointer))))
 
-(defun save-image (image path)
-  "Write IMAGE to PATH. The format is chosen from PATH's extension. Returns
-PATH."
-  (let ((namestring (namestring (pathname path))))
+(defun save-image (image path &key options)
+  "Write IMAGE to PATH. The format is chosen from PATH's extension. OPTIONS is
+an optional libvips saver option string, e.g. \"Q=90,strip\" for JPEG or
+\"compression=9\" for PNG. Returns PATH."
+  (let ((namestring (%filename-with-options (namestring (pathname path)) options)))
     (let ((status (cffi:foreign-funcall-varargs "vips_image_write_to_file"
                                                 (:pointer (pointer-of image)
                                                  :string namestring)

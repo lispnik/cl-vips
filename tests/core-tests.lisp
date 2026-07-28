@@ -110,3 +110,16 @@ results, even on a non-local exit."
   (with-fixture initialized ()
     (is-true (vips:set-leak-checking t))
     (is-false (vips:set-leak-checking nil))))
+
+#+sbcl
+(test concurrent-init-is-safe
+  "Many threads initializing and running an operation at once is safe
+(thread-locked init, thread-safe libvips ops)."
+  (let ((threads (loop repeat 8
+                       collect (sb-thread:make-thread
+                                (lambda ()
+                                  (vips:init)
+                                  (vips:with-image (img (solid-image 8 8 :value 42))
+                                    (vips:avg img)))))))
+    (is (every (lambda (th) (approx= 42.0d0 (sb-thread:join-thread th)))
+               threads))))

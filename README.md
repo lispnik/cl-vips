@@ -31,11 +31,12 @@ search path automatically; adjust `vips:*library-directories*` if yours differ.
 ## Quick tour
 
 ```lisp
-;; Load, transform, save.
+;; Load, transform, save. save-image / load-image take an optional libvips
+;; option string (e.g. JPEG quality, PNG compression, access hints).
 (vips:with-image (img (vips:load-image "photo.jpg"))
   (vips:with-image (small (vips:resize img 0.25))
     (vips:with-image (blurred (vips:gaussblur small 3.0))
-      (vips:save-image blurred "thumb.png"))))
+      (vips:save-image blurred "thumb.jpg" :options "Q=85,strip"))))
 
 ;; Build an image from raw pixels -- no file needed.
 (vips:with-image (img (vips:image-from-pixels
@@ -236,6 +237,11 @@ Because nothing is auto-freed, a dropped image simply leaks. During development
 call `(vips:set-leak-checking t)` — libvips will then print any objects still
 alive (images you forgot to free) at `shutdown`.
 
+**Threads.** `vips:init` is thread-safe (the one-time setup is lock-guarded, and
+it can be reached lazily from any thread); libvips operations are themselves
+thread-safe, so images can be processed concurrently. An individual `image`
+wrapper, like most objects, should not be mutated from two threads at once.
+
 ## Raw pixel data
 
 Beyond one-pixel `getpoint`, you can move whole images to and from Lisp arrays:
@@ -319,12 +325,18 @@ the image and the executable stays portable.
 
 - The first token is an operation nickname (or a subcommand: `info`, `list`,
   `groups`, `describe`, `version`, `run`, `help`).
-- The input file becomes the operation's `in`; the second file (if any) is
-  where the result is written. Operations that yield a scalar (e.g. `avg`)
-  print it instead.
-- Extra options are `name=value` pairs. Values are parsed as booleans,
-  integers, floats, comma-lists (`a=1,2,3` → an array), or strings (enum
-  nicknames like `direction=horizontal`).
+- The input file is loaded into the operation's **primary image input**,
+  whatever it is named (`in`, `image`, `base`, …) — so draw ops work too:
+  `./cl-vips draw_circle in.png out.png ink=255,0,0 cx=50 cy=50 radius=20`.
+  A creator with no image input (e.g. `black`) instead takes the output as its
+  first positional: `./cl-vips black out.png width=64 height=64 bands=3`.
+- The output file receives the result; a scalar result (e.g. `avg`) is printed.
+- Use `-` for **stdin** and `-.EXT` for **stdout**, so the driver composes in
+  pipelines: `./cl-vips invert - -.png < in.png > out.png`.
+- Extra options are `name=value` pairs. Values parse as booleans, integers,
+  floats, comma-lists (`a=1,2,3` → an array), enum nicknames
+  (`direction=horizontal`), or **`@FILE` to load another image**
+  (`./cl-vips composite2 base.png out.png overlay=@over.png mode=over`).
 
 To iterate without building, load the CLI system in a REPL and call the driver
 directly — it is just a function, `vips-cli:main`, taking a list of argument
@@ -348,7 +360,7 @@ or from a REPL:
 (asdf:test-system :cl-vips)      ; or (vips/test:run-tests)
 ```
 
-The suite (245 checks across core, I/O, operations, the generic engine, the
+The suite (256 checks across core, I/O, operations, the generic engine, the
 command-line driver and error handling) builds its fixtures from raw memory and
 programmatic ramps, so it needs **no sample image files**.
 

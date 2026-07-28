@@ -148,10 +148,12 @@
 
 (defun ensure-gtypes ()
   "Resolve and cache the fundamental GTypes we dispatch on. Requires libvips
-to be initialized (which registers the GObject type system)."
+to be initialized (which registers the GObject type system). Thread-safe."
   (unless *gtypes*
     (ensure-init)
-    (setf *gtypes*
+    (with-init-lock
+     (unless *gtypes*
+      (setf *gtypes*
           (list :boolean (%g-type-from-name "gboolean")
                 :int     (%g-type-from-name "gint")
                 :uint    (%g-type-from-name "guint")
@@ -166,7 +168,7 @@ to be initialized (which registers the GObject type system)."
                 :array-int    (%vips-array-int-get-type)
                 :array-double (%vips-array-double-get-type)
                 :array-image  (%vips-array-image-get-type)
-                :blob         (%vips-blob-get-type))))
+                :blob         (%vips-blob-get-type))))))
   *gtypes*)
 
 (defun %gt (key) (getf *gtypes* key))

@@ -31,9 +31,12 @@
 
 (defun parse-scalar (string)
   "Turn a CLI token into a Lisp value: integers/floats become numbers,
-true/false become booleans, everything else stays a string (which covers enum
+true/false become booleans, a leading @ means \"load this file as an image\"
+(a marker resolved later), everything else stays a string (which covers enum
 nicknames and filenames)."
-  (cond ((string-equal string "true") t)
+  (cond ((and (plusp (length string)) (char= (char string 0) #\@))
+         (cons :image-file (subseq string 1)))
+        ((string-equal string "true") t)
         ((string-equal string "false") nil)
         ((numeric-looking-p string)
          (let ((*read-default-float-format* 'double-float))
@@ -93,29 +96,93 @@ argument, e.g. a=1,2,3)."
     (vips:describe-operation op)))
 
 (defun cmd-run (args)
-  "run <op> <infile> [outfile] [name=value ...]
+  "run <op> [infile] [outfile] [name=value ...]
 
-Load INFILE as the \"in\" argument, run OP with any NAME=VALUE options, and
-either save the resulting image to OUTFILE or print a scalar result."
+INFILE is loaded into the operation's primary image input (whatever it is
+named -- \"in\", \"image\", \"base\", ...); use - to read from stdin.  For a
+creator that takes no input image (e.g. black), the first positional is the
+output instead.  OUTFILE receives the result image, or -.EXT writes it to
+stdout in that format; a scalar result is printed.  Image-valued options use
+@FILE, e.g. overlay=@over.png, or a=@a.png,b=@b.png for an image array."
   (let* ((op (first args))
          (rest (rest args))
          (positionals (remove-if #'option-token-p rest))
-         (options (parse-options (remove-if-not #'option-token-p rest)))
-         (infile (first positionals))
-         (outfile (second positionals)))
+         (raw-options (parse-options (remove-if-not #'option-token-p rest))))
     (unless op (error "run: expected an operation name"))
-    (unless infile (error "run: expected an input file"))
     (vips:with-image-pool
-      (let* ((in (vips:load-image infile))
-             (result (vips:call-operation op (list* "in" in options))))
-        (cond ((vips:imagep result)
-               (unless outfile
-                 (error "~a produces an image -- give an output file" op))
-               (vips:save-image result outfile)
-               (format t "wrote ~a (~dx~d)~%"
-                       outfile (vips:width result) (vips:height result)))
-              (t
-               (format t "~a~%" result)))))))
+      (let* ((in-arg (primary-image-input op))
+             (options (resolve-options raw-options))
+             (inputs (if in-arg
+                         (let ((infile (first positionals)))
+                           (unless infile
+                             (error "~a needs an input file (use - for stdin)" op))
+                           (list* in-arg (load-input infile) options))
+                         options))
+             (outfile (if in-arg (second positionals) (first positionals)))
+             (result (vips:call-operation op inputs)))
+        (write-result op result outfile)))))
+
+(defun primary-image-input (op)
+  "The name of OP's first required, non-deprecated image (object) input, or
+NIL if it has none (a creator)."
+  (loop for a in (vips:operation-arguments op)
+        when (and (getf a :input) (getf a :required)
+                  (not (getf a :deprecated)) (eq (getf a :type) :object))
+          return (getf a :name)))
+
+(defun resolve-value (value)
+  "Replace @FILE markers with loaded images (recursing into lists)."
+  (cond ((and (consp value) (eq (car value) :image-file))
+         (vips:load-image (cdr value)))
+        ((and (consp value)
+              (some (lambda (x) (and (consp x) (eq (car x) :image-file))) value))
+         (mapcar #'resolve-value value))
+        (t value)))
+
+(defun resolve-options (options)
+  (loop for (name value) on options by #'cddr
+        collect name collect (resolve-value value)))
+
+(defun load-input (infile)
+  (if (string= infile "-")
+      (vips:load-image-from-stream (binary-stdin))
+      (vips:load-image infile)))
+
+(defun stdout-suffix (outfile)
+  "If OUTFILE is \"-.EXT\" (stdout with a format), return \".EXT\"; else NIL."
+  (when (and (>= (length outfile) 2)
+             (char= (char outfile 0) #\-)
+             (char= (char outfile 1) #\.))
+    (subseq outfile 1)))
+
+(defun write-result (op result outfile)
+  (cond
+    ((vips:imagep result)
+     (let ((suffix (and outfile (stdout-suffix outfile))))
+       (cond
+         (suffix
+          (let ((out (binary-stdout)))
+            (vips:save-image-to-stream result suffix out)
+            (finish-output out)))
+         ((and outfile (string= outfile "-"))
+          (error "writing to stdout needs a format: use -.png, -.jpg, ..."))
+         (outfile
+          (vips:save-image result outfile)
+          (format t "wrote ~a (~dx~d)~%"
+                  outfile (vips:width result) (vips:height result)))
+         (t (error "~a produces an image -- give an output file (or -.EXT for stdout)"
+                   op)))))
+    (t (format t "~a~%" result))))
+
+(defun binary-stdin ()
+  #+sbcl (sb-sys:make-fd-stream 0 :input t :element-type '(unsigned-byte 8)
+                                 :name "stdin")
+  #-sbcl (error "binary stdin is not supported on this Lisp"))
+
+(defun binary-stdout ()
+  #+sbcl (sb-sys:make-fd-stream 1 :output t :element-type '(unsigned-byte 8)
+                                 :name "stdout")
+  #-sbcl (error "binary stdout is not supported on this Lisp"))
 
 (defparameter *usage*
   "cl-vips -- a command-line driver for libvips

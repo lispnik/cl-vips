@@ -57,20 +57,31 @@
   "Return T if libvips has been initialized in this image."
   (and *initialized* t))
 
+;; vips_init is not reentrant, and lazy initialization can be reached from
+;; several threads at once (libvips operations are otherwise thread-safe). Guard
+;; the one-time setup with a lock.
+#+sbcl (defvar *init-lock* (sb-thread:make-mutex :name "cl-vips-init"))
+
+(defmacro with-init-lock (&body body)
+  #+sbcl `(sb-thread:with-mutex (*init-lock*) ,@body)
+  #-sbcl `(progn ,@body))
+
 (defun init (&optional (argv0 "cl-vips"))
-  "Load the foreign libraries and initialize libvips. Idempotent: calling
-more than once is a no-op. ARGV0 is passed to vips_init for diagnostics.
-Signals VIPS-ERROR if initialization fails."
-  (unless *initialized*
-    (load-libraries)
-    ;; libvips does IEEE arithmetic that legitimately produces NaN/inf; SBCL
-    ;; enables floating-point traps by default, which turns those into
-    ;; FLOATING-POINT-INVALID-OPERATION errors when control returns to Lisp.
-    ;; Mask the traps so foreign math behaves as C expects.
-    #+sbcl (sb-int:set-floating-point-modes :traps nil)
-    (unless (zerop (%vips-init argv0))
-      (raise-vips-error))
-    (setf *initialized* t))
+  "Load the foreign libraries and initialize libvips. Idempotent and
+thread-safe: calling more than once, from any thread, is a no-op after the
+first. ARGV0 is passed to vips_init for diagnostics. Signals VIPS-ERROR if
+initialization fails."
+  (with-init-lock
+    (unless *initialized*
+      (load-libraries)
+      ;; libvips does IEEE arithmetic that legitimately produces NaN/inf; SBCL
+      ;; enables floating-point traps by default, which turns those into
+      ;; FLOATING-POINT-INVALID-OPERATION errors when control returns to Lisp.
+      ;; Mask the traps so foreign math behaves as C expects.
+      #+sbcl (sb-int:set-floating-point-modes :traps nil)
+      (unless (zerop (%vips-init argv0))
+        (raise-vips-error))
+      (setf *initialized* t)))
   *initialized*)
 
 (defun set-leak-checking (on)
